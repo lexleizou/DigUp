@@ -142,11 +142,28 @@ swift test --filter SearchTextTests
 
 ### 回归判据
 
-**改检索必须跑 evals，前后对比。** 阶段 1 的判据：
+**改检索必须跑 evals，前后对比。** 阶段 1 的实测结果（2026-10-17，M1 Max，llama.cpp b11461，EmbeddingGemma 2 Q8_0）：
 
-- `synthetic` / `code` 的 R@1 与改动前**完全一致**（bigram 对拉丁文不生效）
-- `multilingual` 的孟加拉语/阿拉伯语结果不变
-- 新增中文用例通过
+| eval | 查询数 | 改前 R@1 / R@5 | 改后 R@1 / R@5 | 判断 |
+|---|---|---|---|---|
+| `chinese`（新增） | 24 | 0.75 / 0.88 | **0.79 / 0.92** | 提升 |
+| `synthetic` | 37 | 0.92 / 1.00 | 0.92 / 1.00 | 零回归 ✅ |
+| `multilingual`（孟/阿） | 48 | 0.83 / 0.98 | 0.83 / 0.98 | 零回归 ✅ |
+| `code` | 41 | 1.00 / 1.00 | 1.00 / 1.00 | 零回归 ✅ |
+
+R@10：`chinese` 0.92 → 0.96，其余三项不变。
+
+**关键验证**：中文关键词检索从「完全不可用」变为可用。改前搜「押金条款」查不到写着该条款的合同，改后 R@1 命中。
+
+### 复现步骤
+
+```bash
+./scripts/make-testbed.sh              # 需要 ffmpeg，生成 ~/DigUpTestbed
+DIGUP_MODELS=<模型目录> .build/release/digup index ~/DigUpTestbed --index <索引目录>
+DIGUP_MODELS=<模型目录> .build/release/digup eval evals/chinese.json --index <索引目录>
+```
+
+模型目录需含 `embeddinggemma-2-Q8_0.gguf` 和 `mmproj-embeddinggemma-2-Q8_0.gguf`（`ModelFiles.swift` 里有 SHA-256）。
 
 ---
 
