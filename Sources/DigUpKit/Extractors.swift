@@ -53,8 +53,9 @@ enum DocExtractor {
     static func text(of url: URL) throws -> String {
         let ext = url.pathExtension.lowercased()
         switch ext {
-        case "docx", "doc", "odt", "rtf": return try richText(of: url, type: ext)
-        case "xlsx", "pptx", "ods", "odp": return try OfficeText.text(of: url, type: ext)
+        case "docx", "doc", "odt", "rtf", "docm", "dotx", "dotm": return try richText(of: url, type: ext)
+        case "xlsx", "xlsm", "xltx", "xltm", "pptx", "pptm", "potx", "potm", "ods", "odp":
+            return try OfficeText.text(of: url, type: ext)
         case "html", "htm": return plainText(fromHTML: try readText(url))
         default: return try readText(url)
         }

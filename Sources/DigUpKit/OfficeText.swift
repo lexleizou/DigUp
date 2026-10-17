@@ -14,9 +14,10 @@ enum OfficeText {
         if isCompoundFile(url) { throw ExtractError.locked }
         let zip = try ZipArchive(url)
         var out = Output()
+        // Macros and templates are the same package as the file they're a variant of.
         switch ext {
-        case "xlsx": try workbook(zip, into: &out)
-        case "pptx": try presentation(zip, into: &out)
+        case "xlsx", "xlsm", "xltx", "xltm": try workbook(zip, into: &out)
+        case "pptx", "pptm", "potx", "potm": try presentation(zip, into: &out)
         case "ods": spreadsheet(try zip.required("content.xml"), into: &out)
         default: slides(try zip.required("content.xml"), into: &out)   // odp
         }

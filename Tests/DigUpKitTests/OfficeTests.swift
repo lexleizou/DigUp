@@ -258,6 +258,10 @@ import Compression
         for name in ["a.xlsx", "a.pptx", "a.ods", "a.odp", "A.XLSX"] {
             #expect(Rules.classify(file(name), values: nil, options: IndexOptions()) == .index(.doc))
         }
+        // The macro and template variants are the same package: same zip, same XML, so the same reader.
+        for name in ["a.xlsm", "a.xltx", "a.xltm", "a.pptm", "a.potx", "a.potm", "a.docm", "a.dotx", "a.dotm"] {
+            #expect(Rules.classify(file(name), values: nil, options: IndexOptions()) == .index(.doc))
+        }
         let url = file("budget.xlsx")
         try OfficeFiles.zip(Self.workbook, to: url)
         let store = try IndexStore(directory: folder.appendingPathComponent("index"))
@@ -269,6 +273,16 @@ import Compression
             SELECT f.path FROM fts JOIN segments s ON s.id = fts.rowid JOIN files f ON f.id = s.file WHERE fts MATCH ?
             """, [.text("\"quartz\"")]) { found.append($0.text(0) ?? "") }
         #expect(found == [url.path])
+    }
+
+    @Test func aMacroVariantIsReadLikeTheFileItVaries() throws {
+        // A .xlsm is an .xlsx with a vbaProject part; the XML the words come from is the same.
+        let url = file("budget.xlsm")
+        try OfficeFiles.zip(Self.workbook, to: url)
+        #expect(try DocExtractor.text(of: url).contains("quartz"))
+        let deck = file("deck.pptm")
+        try OfficeFiles.zip(Self.deck, to: deck)
+        #expect(try DocExtractor.text(of: deck).contains("Rappeler le devis du couvreur"))
     }
 
     private func failure(_ url: URL) -> String? {

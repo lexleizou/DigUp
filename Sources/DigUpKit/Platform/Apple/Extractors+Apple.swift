@@ -186,7 +186,7 @@ extension DocExtractor {
     static func richText(of url: URL, type ext: String) throws -> String {
         let type: NSAttributedString.DocumentType
         switch ext {
-        case "docx": type = .officeOpenXML
+        case "docx", "docm", "dotx", "dotm": type = .officeOpenXML
         case "doc": type = .docFormat
         case "odt": type = .openDocument
         default: type = .rtf

@@ -23,6 +23,8 @@ public enum Rules {
 
     static let docExtensions: Set<String> = [
         "txt", "text", "md", "markdown", "rtf", "docx", "doc", "odt", "html", "htm", "xlsx", "pptx", "ods", "odp",
+        // The same files with macros: same zip, same XML, so they're read the same way (`OfficeText`).
+        "xlsm", "xltx", "xltm", "pptm", "potx", "potm", "docm", "dotx", "dotm",
     ]
 
     /// Source code and data files: off by default (your editor and ripgrep search them better, and they flood an index).
