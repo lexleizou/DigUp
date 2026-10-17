@@ -44,6 +44,10 @@ public final class Indexer {
     /// version may bring a new model), and this hears about it. When nil, indexing stops with `fingerprintMismatch`.
     public var resetOnModelChange: ((_ indexed: String, _ now: String) -> Void)?
 
+    /// What was said in a recording, written into keyword search beside its sound vector (`Transcriber`). Unset (how
+    /// DigUp ships): recordings are searchable by how they sound and by nothing they say.
+    public var transcriber: (any Transcriber)?
+
     /// The vector source of the embedders `makeEmbedder` makes, when it's known without starting one (llama.cpp's is):
     /// then `checkModel()` can notice a new model before anything needs embedding.
     public var embedderSource: String?
@@ -693,14 +697,25 @@ public final class Indexer {
             return ("skipped", "silent or too short")
         }
         let vectors = try fullWorker().embedAudio(pieces.map(\.path))
+        let said = transcribe(pieces)
         try store.db.transaction {
-            for (piece, embedding) in zip(pieces, vectors) {
+            for index in pieces.indices {
+                let piece = pieces[index]
                 try store.addSegment(file: file.id, kind: .audio, modality: .audio, loc: piece.start, locEnd: piece.end,
-                                     vector: embedding.vector)
+                                     excerpt: said[index].map { excerpt($0) }, text: said[index], vector: vectors[index].vector)
             }
-            try store.finish(file.id, state: "done", info: ["duration": String(format: "%.1f", duration)])
+            try store.finish(file.id, state: "done", info: ["duration": String(format: "%.1f", duration),
+                                                            "said": "\(said.compactMap { $0 }.count)"])
         }
-        return ("done", "\(pieces.count) windows, \(Int(duration)) s")
+        let words = said.compactMap { $0 }.count
+        return ("done", "\(pieces.count) windows, \(Int(duration)) s"
+                + (words > 0 ? ", \(words) written down" : ""))
+    }
+
+    /// What each window says, one entry per piece (nil where nothing was said or no transcriber is set).
+    private func transcribe(_ pieces: [MediaPiece]) -> [String?] {
+        guard let transcriber else { return Array(repeating: nil, count: pieces.count) }
+        return pieces.map { transcriber.text(ofWindowAt: URL(fileURLWithPath: $0.path)) }
     }
 
     private func video(_ file: FileRecord, frames: [MediaPiece], sound: [MediaPiece], duration: Double) throws
@@ -712,17 +727,22 @@ public final class Indexer {
         let worker = try fullWorker()
         let frameVectors = try worker.embedImages(frames.map(\.path), budget: options.frameBudget)
         let soundVectors = try worker.embedAudio(sound.map(\.path))
+        let said = transcribe(sound)
         try store.db.transaction {
             for (frame, embedding) in zip(frames, frameVectors) {
                 try store.addSegment(file: file.id, kind: .frame, modality: .image, loc: frame.start,
                                      locEnd: frame.end, vector: embedding.vector)
             }
-            for (piece, embedding) in zip(sound, soundVectors) {
+            for index in sound.indices {
+                let piece = sound[index]
                 try store.addSegment(file: file.id, kind: .audio, modality: .audio, loc: piece.start,
-                                     locEnd: piece.end, vector: embedding.vector)
+                                     locEnd: piece.end, excerpt: said[index].map { excerpt($0) }, text: said[index],
+                                     vector: soundVectors[index].vector)
             }
             try store.finish(file.id, state: "done", info: ["duration": String(format: "%.1f", duration),
-                                                            "frames": "\(frames.count)", "sound_windows": "\(sound.count)"])
+                                                            "frames": "\(frames.count)",
+                                                            "sound_windows": "\(sound.count)",
+                                                            "said": "\(said.compactMap { $0 }.count)"])
         }
         return ("done", "\(frames.count) frames, \(sound.count) sound windows, \(Int(duration)) s")
     }

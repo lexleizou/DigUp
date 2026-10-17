@@ -308,6 +308,7 @@ func index(_ args: Arguments) throws {
     })
     indexer.embedderSource = embedderSource()
     indexer.costsFolder = store.directory
+    indexer.transcriber = LocalTranscriber.fromEnvironment()
     try store.readAgainOnce()   // what older indexes couldn't read: scanned pages' words, SVGs
     try indexer.checkModel()
     let folders = try args.folders()
@@ -420,10 +421,13 @@ func indexService(_ args: Arguments) throws -> Int32 {
     let model = SharedEmbedder {
         try makeEmbedder(textOnly: false, log: args.indexFolder.appendingPathComponent("worker.log"), qos: .utility)
     }
+    // Read once, so a helper that indexes for an hour keeps meaning the same thing by "transcribe" all the way through.
+    let transcriber = LocalTranscriber.fromEnvironment()
     func part(_ file: String, options: IndexOptions, roots: [URL]) throws -> IndexService.Part {
         let store = try IndexStore(directory: args.indexFolder, file: file)
         let indexer = try Indexer(store: store, options: options, makeEmbedder: { try model.embedder() })
         indexer.costsFolder = args.indexFolder   // what indexing costs here, for later estimates
+        indexer.transcriber = transcriber
         // A new app version may bring a new model: the index starts over by itself (keyword search on names goes on).
         indexer.embedderSource = embedderSource()
         indexer.resetOnModelChange = { indexed, now in
