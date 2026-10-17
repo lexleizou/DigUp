@@ -1,0 +1,29 @@
+{
+  "base": "~/DigUpTestbed",
+  "queries": [
+    {"q": "验收报告", "expect": ["synthetic/lang/zh/项目验收报告.txt"], "tag": "zh-doc"},
+    {"q": "整改计划", "expect": ["synthetic/lang/zh/项目验收报告.txt"], "tag": "zh-doc"},
+    {"q": "压力测试", "expect": ["synthetic/lang/zh/项目验收报告.txt"], "tag": "zh-doc"},
+    {"q": "安全扫描漏洞", "expect": ["synthetic/lang/zh/项目验收报告.txt"], "tag": "zh-doc"},
+    {"q": "押金条款", "expect": ["synthetic/lang/zh/租赁合同.txt"], "tag": "zh-doc"},
+    {"q": "逾期未付", "expect": ["synthetic/lang/zh/租赁合同.txt"], "tag": "zh-doc"},
+    {"q": "月租金", "expect": ["synthetic/lang/zh/租赁合同.txt"], "tag": "zh-doc"},
+    {"q": "租赁期限", "expect": ["synthetic/lang/zh/租赁合同.txt"], "tag": "zh-doc"},
+    {"q": "数字孪生", "expect": ["synthetic/lang/zh/会议纪要.md"], "tag": "zh-doc"},
+    {"q": "数据采集层", "expect": ["synthetic/lang/zh/会议纪要.md", "synthetic/lang/zh/项目验收报告.txt"], "tag": "zh-doc"},
+    {"q": "张三", "expect": ["synthetic/lang/zh/会议纪要.md"], "tag": "zh-word"},
+    {"q": "网络拓扑", "expect": ["synthetic/lang/zh/会议纪要.md"], "tag": "zh-word"},
+    {"q": "物料编码", "expect": ["synthetic/lang/zh/供应商清单.txt"], "tag": "zh-doc"},
+    {"q": "思科交换机", "expect": ["synthetic/lang/zh/供应商清单.txt"], "tag": "zh-doc"},
+    {"q": "NET-C9300-48P", "expect": ["synthetic/lang/zh/供应商清单.txt"], "tag": "zh-exact"},
+    {"q": "数字化转型", "expect": ["synthetic/lang/zh/数字化转型方案.txt"], "tag": "zh-doc"},
+    {"q": "设备综合效率", "expect": ["synthetic/lang/zh/数字化转型方案.txt"], "tag": "zh-doc"},
+    {"q": "质量追溯", "expect": ["synthetic/lang/zh/数字化转型方案.txt"], "tag": "zh-doc"},
+    {"q": "设备健康管理", "expect": ["synthetic/lang/zh/会议纪要.md", "synthetic/lang/zh/数字化转型方案.txt"], "tag": "zh-doc"},
+    {"q": "the clause about the deposit", "expect": ["synthetic/lang/zh/租赁合同.txt"], "tag": "en→zh"},
+    {"q": "acceptance report and rectification", "expect": ["synthetic/lang/zh/项目验收报告.txt"], "tag": "en→zh"},
+    {"q": "digital twin project kickoff", "expect": ["synthetic/lang/zh/会议纪要.md"], "tag": "en→zh"},
+    {"q": "supplier list with part numbers", "expect": ["synthetic/lang/zh/供应商清单.txt"], "tag": "en→zh"},
+    {"q": "验收报告", "kind": "doc", "expect": ["synthetic/lang/zh/项目验收报告.txt"], "tag": "zh-kind"}
+  ]
+}
