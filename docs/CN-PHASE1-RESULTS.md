@@ -204,7 +204,54 @@ git worktree add /tmp/base upstream/main
 
 ---
 
-## 9. 已知限制
+## 9. 与上游 0.92 的差异：语料污染，不是回归
+
+上游 PR #85 的表格记录 `multilingual` 的 R@1 是 **0.92**，本地测到 **0.83**。查证结果：**测量语料不同，不是回归。**
+
+### 三组隔离测试
+
+| 语料组合 | R@1 | 与 0.92 的差 |
+|---|---|---|
+| 完整 testbed（`real/` + `synthetic/` + `traps/` + `zh/`） | 0.83 | −0.09 |
+| 完整 testbed，去掉 `zh/` | 0.85 | −0.07 |
+| `synthetic/` + `traps/`（无 `real/`） | **0.90** | −0.02 |
+| 上游声称 | 0.92 | — |
+
+### 两个污染源
+
+**① `real/` 真实文件（−0.05，主因）**
+
+`make-testbed.sh` 会从 Desktop/Documents/Downloads 采样真实文件（120 图、25 PDF、15 文档）。这些文件与 eval 期望答案语义高度相近，抢走首位：
+
+- 「কফি শপের রসিদ」（咖啡店收据）→ 被**星巴克订单截图**抢走
+- 「mobile wallet transfer failed」→ 被真实支付错误截图干扰
+
+**② `zh/` 中文语料（−0.02，次因）**
+
+中文文件与孟加拉语/阿拉伯语文件语义交叉：
+
+- 「قائمة مشتريات البقالة」（杂货购物清单）→ 被**供应商清单.txt** 抢走
+- 「apartment rent agreement」→ 被**租赁合同.txt** 抢走
+
+### 关键证据
+
+在**同一份含 `real/` + `zh/` 的语料**上，改前（基线 `ec28973`）R@1 也是 **0.83**，与改后完全相同。**证明差异来自语料，不来自改动。**
+
+### 建议
+
+上游的 0.92 是在**纯净的 `synthetic` + `traps`** 上测的。`real/` 是给人手动试用 testbed 的，不适合作为 eval 基准。
+
+跑 eval 时应隔离：
+
+```bash
+# 只建 synthetic + traps，不采样真实文件
+mkdir -p tb-clean && cp -R ~/DigUpTestbed/synthetic ~/DigUpTestbed/traps tb-clean/
+DIGUP_TESTBED=tb-clean digup eval evals/multilingual.json --index <索引目录>
+```
+
+---
+
+## 10. 已知限制
 
 | 限制 | 说明 |
 |---|---|
@@ -216,7 +263,7 @@ git worktree add /tmp/base upstream/main
 
 ---
 
-## 10. 与上游 PR 的关系
+## 11. 与上游 PR 的关系
 
 | PR | 关系 |
 |---|---|
