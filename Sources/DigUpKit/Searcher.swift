@@ -376,6 +376,10 @@ public final class Searcher {
         "ছবি", "স্ক্রিনশট", "ভিডিও", "ফাইল", "পিডিএফ",
         "في", "من", "على", "الى", "عن", "مع", "هذا", "هذه", "ذلك", "التي", "الذي", "اين", "ما",
         "صورة", "صور", "لقطة", "شاشة", "فيديو", "ملف", "مستند",
+        // Chinese: the words that describe what to look for, not what's in it, and the particles a description carries
+        "截图", "图片", "照片", "图像", "视频", "影片", "音频", "录音", "文档", "文件", "幻灯片",
+        "的", "了", "和", "是", "在", "我", "有", "这", "那", "与", "及", "或", "也", "就", "都", "而",
+        "一个", "这个", "那个", "我们", "什么", "哪里", "怎么", "如何", "关于",
     ]
 
     /// The content words of a query, normalized as keyword search keeps its text (`SearchText`). Kind words
@@ -389,10 +393,15 @@ public final class Searcher {
     }
 
     /// FTS5 patterns for the query's words: quoted, and as prefixes for the last word while it's being typed and for
-    /// words of languages that attach endings (`SearchText.inflects`). `search` makes a word that's in no file a
-    /// prefix too.
+    /// words of languages that attach endings (`SearchText.inflects`). A word with Han characters becomes the phrase of
+    /// its pairs, in order: "验收报告" → "验收 收报 报告", which matches only where they sit together and in that order
+    /// (indexed by `SearchText.indexable`). A single character has no pair, so it stays a prefix.
     static func patterns(_ terms: [String], prefixLast: Bool) -> [String] {
         terms.enumerated().map { index, term in
+            if SearchText.cutsInPairs(term) {
+                let pairs = SearchText.indexable(term)
+                return pairs == term ? "\"\(term)\"*" : "\"\(pairs)\""
+            }
             let prefix = (prefixLast && index == terms.count - 1) || SearchText.inflects(term)
             return "\"\(term)\"" + (prefix ? "*" : "")
         }
@@ -422,6 +431,8 @@ public final class Searcher {
         "গান": .audio, "রেকর্ডিং": .audio,
         "لقطة": .screenshot, "صورة": .image, "صور": .image, "مستند": .doc, "ملاحظات": .doc, "فيديو": .video,
         "مقطع": .video, "صوت": .audio, "تسجيل": .audio, "اغنية": .audio,
+        "截图": .screenshot, "图片": .image, "照片": .image, "图像": .image, "视频": .video, "影片": .video,
+        "音频": .audio, "录音": .audio, "文档": .doc, "文件": .doc, "幻灯片": .pdf,
     ]
 
     /// Kinds the query asks for ("…in a video", "screenshot of…", "ভিডিওতে"): a soft boost, not a filter. Bengali

@@ -20,7 +20,7 @@ public struct FileRecord: Sendable {
 public final class IndexStore {
     public let directory: URL
     public let db: Database
-    static let schemaVersion: Int64 = 5
+    static let schemaVersion: Int64 = 6
 
     /// Keyword search's tokenizer. Marks (M*) count as letters, so Bengali vowel signs and Arabic harakat stay inside
     /// their words: by default SQLite splits on them ("কলকাতায়" became "কলক", "ত", "য").
@@ -101,6 +101,7 @@ public final class IndexStore {
             if (1...2).contains(version) { try migrateScreenshotText() }
             if (1...3).contains(version) { try migrateVectorNames() }
             if (1...4).contains(version) { try migrateLongFiles() }
+            if (1...5).contains(version) { try migrateKeywordPairs() }
         }
     }
 
@@ -203,6 +204,33 @@ public final class IndexStore {
             PRAGMA user_version = 5;
             """)
     }
+    /// Schema 5 → 6: keyword search stores Chinese text as its pairs (`SearchText.indexable`), so a search for part
+    /// of a run of characters finds it. Rebuilt from `original`, the text as it's written, without reading any file.
+    ///
+    /// A row whose `original` is NULL was stored before this version and kept only its cut-up or single-word `body`:
+    /// for Chinese that text can't be recovered, so the file is queued to be read again. Rows with `original` (Arabic
+    /// with hamza or harakat, Bengali with joiners) are rebuilt here.
+    private func migrateKeywordPairs() throws {
+        try db.execute("CREATE VIRTUAL TABLE fts_new USING fts5(\(Self.ftsColumns))")
+        var reRead = Set<Int64>()
+        try db.query("""
+            SELECT fts.rowid, fts.name, coalesce(fts.original, fts.body), fts.original IS NULL, s.file
+            FROM fts LEFT JOIN segments s ON s.id = fts.rowid
+            """) { row in
+            let text = row.text(2) ?? ""
+            let name = SearchText.normalized(row.text(1) ?? "")
+            // The words are cut again from what's stored: a Han run that came out as one word becomes its pairs.
+            try db.run("INSERT INTO fts_new(rowid, name, body, original) VALUES(?, ?, ?, ?)",
+                       [.int(row.int(0)), .text(SearchText.indexable(name))] + Self.keywordText(text))
+            // `body` held the text as written before this version only when `original` was set; without it, a run of
+            // Han characters was stored as one word and can't be recovered. Only those files are read again.
+            guard row.int(3) == 1, row.isNull(4) == false, SearchText.cutsInPairs(text) else { return }
+            reRead.insert(row.int(4))
+        }
+        try db.execute("DROP TABLE fts; ALTER TABLE fts_new RENAME TO fts; PRAGMA user_version = 6;")
+        for file in reRead { try requeue(file) }
+    }
+
     // MARK: Meta
 
     public func meta(_ key: String) throws -> String? {
@@ -281,7 +309,7 @@ public final class IndexStore {
         try db.run("UPDATE files SET path = ? WHERE id = ?", [.text(path), .int(id)])
         try db.run("""
             UPDATE fts SET name = ?, body = ? WHERE rowid IN (SELECT id FROM segments WHERE file = ? AND kind = 'name')
-            """, [.text(SearchText.normalized(Self.nameText(path))), .text(SearchText.normalized(Self.folderText(path))),
+            """, [.text(Self.indexed(Self.nameText(path))), .text(Self.indexed(Self.folderText(path))),
                   .int(id)])
     }
 
@@ -437,17 +465,26 @@ public final class IndexStore {
         }
     }
 
-    /// `body` and `original` for keyword search: the normalized text, and the text as written if that differs.
+    /// `body` and `original` for keyword search: the words as the tokenizer needs them (`SearchText.indexable`, which
+    /// cuts Chinese into pairs), and the text as written when that differs, for showing it.
     static func keywordText(_ text: String) -> [SQLValue] {
         let normalized = SearchText.normalized(text)
-        return [.text(normalized), normalized == text ? .null : .text(text)]
+        let indexed = SearchText.indexable(normalized)
+        return [.text(indexed), indexed == text ? .null : .text(text)]
     }
 
     private func addNameRow(file: Int64, path: String) throws {
         try db.run("INSERT INTO segments(file, kind, modality) VALUES(?, 'name', 'none')", [.int(file)])
+        // Both columns hold words, so both are cut for the tokenizer; `original` stays out: a name row shows the
+        // file's own name in the app.
         try db.run("INSERT INTO fts(rowid, name, body) VALUES(?, ?, ?)",
-                   [.int(db.lastInsertID), .text(SearchText.normalized(Self.nameText(path))),
-                    .text(SearchText.normalized(Self.folderText(path)))])
+                   [.int(db.lastInsertID), .text(Self.indexed(Self.nameText(path))),
+                    .text(Self.indexed(Self.folderText(path)))])
+    }
+
+    /// `text` as keyword search stores it in a column it matches on.
+    static func indexed(_ text: String) -> String {
+        SearchText.indexable(SearchText.normalized(text))
     }
 
     private func deleteSegments(of file: Int64, keepingName: Bool) throws {

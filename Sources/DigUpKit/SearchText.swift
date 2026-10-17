@@ -30,6 +30,89 @@ public enum SearchText {
         word.unicodeScalars.contains { Script.indic.contains($0.value) || Script.arabic.contains($0.value) }
     }
 
+    /// True for a character of a script written without spaces between words: Chinese, Japanese and Korean. The
+    /// tokenizer splits on spaces, so a run of them reaches it as one word and a search for part of it finds nothing:
+    /// `indexable` cuts the run into its overlapping pairs instead.
+    ///
+    /// Only Han is listed. Kana and Hangul are left out on purpose: a search for "東京" has to find "東京都" (Han
+    /// runs, cut here), and a search for a Korean word has to find it inside a longer one, which `inflects` already
+    /// does for the scripts it covers. Cutting Kana and Hangul would also change what `matches` highlights for them,
+    /// where the prefix rule already gives the whole word. Measured on 2026-10-17: a Han run of 700,000 characters
+    /// indexed as pairs is 12 MB against 2 MB as one word, and an English index is the same size either way.
+    static func joinsWords(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 0x3400...0x4DBF,        // CJK Unified Ideographs Extension A
+             0x4E00...0x9FFF,        // CJK Unified Ideographs
+             0xF900...0xFAFF: true   // CJK Compatibility Ideographs
+        case 0x20000...0x3FFFF: true  // CJK Unified Ideographs Extension B and later
+        default: false
+        }
+    }
+
+    /// True when `word` has a Han character, so keyword search stores and looks it up as pairs (`indexable`).
+    static func cutsInPairs(_ word: String) -> Bool {
+        word.unicodeScalars.contains(where: joinsWords)
+    }
+
+    /// `text` the way keyword search stores it: a run of Han characters becomes its overlapping pairs, so "验收报告"
+    /// is stored as "验收 收报 报告" and a search for any part of it finds the whole. Everything else is left as it is,
+    /// including Latin, digits, spaces and punctuation.
+    ///
+    /// A run of one character stays itself: it has no pair. That is the one thing this can't find, and the reason
+    /// `terms` keeps asking for two characters.
+    ///
+    /// Called on text `normalized` has already NFKC-folded, so full-width Latin is ASCII by then and every Han
+    /// character is one scalar.
+    public static func indexable(_ text: String) -> String {
+        var out = String.UnicodeScalarView()
+        var run: [Unicode.Scalar] = []
+        // Whether a word is already written, so that what follows it gets the space the tokenizer needs: without it
+        // "PDF报告" stayed one word and "报告" found nothing.
+        var wroteWord = false
+        // Starts a new word: a space before it when the text already wrote one. Han pairs are separate words.
+        func startWord() {
+            if wroteWord { out.append(" ") }
+            wroteWord = true
+        }
+        func flush() {
+            switch run.count {
+            case 0: break
+            case 1:
+                startWord()
+                out.append(run[0])
+            default:
+                for index in 0..<(run.count - 1) {
+                    startWord()
+                    out.append(run[index])
+                    out.append(run[index + 1])
+                }
+            }
+            run.removeAll(keepingCapacity: true)
+        }
+        for scalar in text.unicodeScalars {
+            if joinsWords(scalar) {
+                run.append(scalar)
+                continue
+            }
+            flush()
+            if CharacterSet.alphanumerics.contains(scalar) {
+                // A letter or digit right after another one continues the same word; one right after Han or
+                // punctuation starts a new one.
+                if !wroteWord || out.last.map({ !CharacterSet.alphanumerics.contains($0) }) == true {
+                    startWord()
+                }
+                out.append(scalar)
+                wroteWord = true
+            } else {
+                // A space, a comma, a full stop: already a separator, so it ends the word it follows.
+                out.append(scalar)
+                wroteWord = false
+            }
+        }
+        flush()
+        return String(out)
+    }
+
     /// Whether text says something in words: at least a fifth of what isn't space is letters (marks count, such as
     /// Bengali vowel signs). A data dump or a table of numbers isn't, and gets keyword search only: a meaning vector of
     /// digits matches nothing anyone would describe. On the testbed (2026-10-09) real pages and chunks had 30% letters
@@ -51,7 +134,11 @@ public enum SearchText {
         guard !needle.isEmpty else { return [] }
         let folded = Folded(text)
         let haystack = folded.text as NSString
-        let prefix = inflects(word)
+        // A Han word is part of a longer run of them as often as a Bengali word takes an ending, and for the same
+        // reason: there is no space to stop at. So there is no whole-word boundary to check on either side: "验收" is
+        // in "项目验收报告" and the run it starts is the whole word to mark.
+        let han = cutsInPairs(word)
+        let prefix = inflects(word) || han
         var found: [Range<String.Index>] = []
         var searchRange = NSRange(location: 0, length: haystack.length)
         while found.count < 500 {
@@ -59,7 +146,7 @@ public enum SearchText {
             guard hit.location != NSNotFound else { break }
             searchRange = NSRange(location: hit.upperBound, length: haystack.length - hit.upperBound)
             guard var range = folded.original(hit) else { continue }
-            if range.lowerBound > text.startIndex, isWordCharacter(text[text.index(before: range.lowerBound)]) {
+            if !han, range.lowerBound > text.startIndex, isWordCharacter(text[text.index(before: range.lowerBound)]) {
                 continue
             }
             if range.upperBound < text.endIndex, isWordCharacter(text[range.upperBound]) {

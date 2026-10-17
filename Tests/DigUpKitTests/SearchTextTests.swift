@@ -169,4 +169,45 @@ import Testing
         let bullets = String(repeating: "\u{F0B7} Item one of the slide\n", count: 6)
         #expect(PageTextProblem.check(bullets) == nil)
     }
+
+    @Test func chineseIsStoredAsItsPairs() {
+        #expect(SearchText.indexable("验收报告") == "验收 收报 报告")
+        #expect(SearchText.indexable("验收 报告") == "验收 报告")        // a space already ends the run
+        #expect(SearchText.indexable("报") == "报")                       // one character has no pair
+        #expect(SearchText.indexable("项目验收，报告完成") == "项目 目验 验收，报告 告完 完成")
+        #expect(SearchText.indexable("annual report") == "annual report")  // Latin is left alone
+        #expect(SearchText.indexable("PDF报告") == "PDF 报告")            // a space ends the Latin word before Han
+        // `normalized` is what folds full-width to ASCII; `indexable` runs on its output.
+        #expect(SearchText.indexable(SearchText.normalized("项目验收，报告完成")) == "项目 目验 验收,报告 告完 完成")
+    }
+
+    @Test func aPartOfAChineseRunIsFound() throws {
+        // The run is stored as pairs, and a query for part of it becomes the phrase of its own pairs: the same run,
+        // cut the same way, so it matches only where the characters sit together and in that order.
+        let store = try IndexStore(directory: folder)
+        let file = try store.insert(Candidate(path: "/d/验收报告.txt", kind: .doc, size: 1, mtime: 1, inode: 1, device: 1))
+        try store.addSegment(file: file, kind: .chunk, modality: .none, loc: 1,
+                             text: "关于本项目验收报告的说明，包含测试记录与整改计划。")
+        let searcher = try Searcher(store: store, loadVectors: false)
+        #expect(try searcher.search("验收报告", queryVector: nil).map(\.path) == ["/d/验收报告.txt"])
+        #expect(try searcher.search("测试记录", queryVector: nil).map(\.path) == ["/d/验收报告.txt"])
+        #expect(try searcher.search("报告验收", queryVector: nil).isEmpty)   // the other order is a different word
+        #expect(try searcher.search("押金条款", queryVector: nil).isEmpty)
+    }
+
+    @Test func chineseInAFileNameIsFound() throws {
+        let store = try IndexStore(directory: folder)
+        _ = try store.insert(Candidate(path: "/d/项目验收报告.pdf", kind: .pdf, size: 1, mtime: 1, inode: 1, device: 1))
+        let searcher = try Searcher(store: store, loadVectors: false)
+        #expect(try searcher.search("验收", queryVector: nil).map(\.path) == ["/d/项目验收报告.pdf"])
+    }
+
+    @Test func chineseMatchesAreMarkedInTheTextAsWritten() {
+        let text = "关于本项目验收报告的说明"
+        // Chinese has no spaces, so the highlighter extends the hit to the end of the run it starts, as it does for a
+        // Bengali word that takes an ending. The whole run is marked; nothing splits it.
+        #expect(SearchText.matches(of: "验收", in: text).map { String(text[$0]) } == ["验收报告的说明"])
+        #expect(SearchText.snippet(text, terms: ["验收"]) == "关于本项目«验收报告的说明»")
+        #expect(SearchText.matches(of: "押金", in: text).isEmpty)
+    }
 }
