@@ -41,6 +41,8 @@ addSegment(kind: .audio, modality: .audio, loc: piece.start, locEnd: piece.end, 
 
 ## 3. 设计
 
+> **关于时间戳**：Qwen3-ASR 对整段音频只返回单段时间戳，但这对 DigUp 没有影响 —— 窗口在送进去之前就切好了。实测证据与边界分析见 [CN-WINDOW-AND-TIMESTAMPS.md](CN-WINDOW-AND-TIMESTAMPS.md)。
+
 ### 核心：一句话
 
 **音频窗口不变，只是多了一行字。** 同一个 segment 同时携带声学向量和文字：
@@ -185,7 +187,7 @@ export DIGUP_ASR_KEY="<你的 key>"          # 本地服务通常不需要
 
 | 限制 | 说明 |
 |---|---|
-| 时间戳粒度 | 30 秒窗口级。窗口内更细的位置靠模型自己的力量，但 DigUp 只用窗口起点 |
+| 时间戳粒度 | 30 秒窗口级（步进 25 秒）。**这对 DigUp 不构成问题**，实测证明定位准确，见 [CN-WINDOW-AND-TIMESTAMPS.md](CN-WINDOW-AND-TIMESTAMPS.md) |
 | 只转写语音 | 音乐、环境音效转写为 `[BLANK_AUDIO]` 之类的标记，会被过滤掉 |
 | 长音频耗时 | 2 小时录音 = 288 个窗口 = 288 次 HTTP 调用。按实测约 5–10 分钟，可接受但不算快 |
 | 无说话人分离 | 不区分「谁说的」，只记录「说了什么」 |
