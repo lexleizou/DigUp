@@ -47,6 +47,10 @@ let usage = """
       --word-weight W      bonus for containing all of the query's words (default 2.0, and for code see Searcher)
       --shot-tokens N      vision tokens per screenshot (default 280; 560 was 2× slower, no better on real shots)
       --code-stretch N     characters a stretch of code holds at most (default 1800; 1200 and 3600 lost on the evals)
+      --slides N           a presentation's pages rendered as pictures, at most N per deck (default 60; 0 turns it off)
+      --max-pages N        a PDF's pages read at most, a converted .ppt included (default 5000)
+      --max-chunks N       a document's chunks read at most, ~1,800 characters each (default 5000, ~8M characters)
+                            Raising either one only affects files read after it changes: what hit the old cap is done.
 
     The model: EmbeddingGemma 2 on llama.cpp, from $DIGUP_MODELS (only there, when set), else
     ~/Library/Application Support/DigUp/Models or the Hugging Face cache. DIGUP_WORKER_DIR=worker uses the
@@ -65,7 +69,14 @@ struct Arguments {
     var flags: Set<String> = []
     static let valued: Set<String> = ["--index", "--limit", "--kind", "-n", "--zgate", "--word-weight", "--new-limit",
                                       "--linger", "--shot-tokens", "--code-stretch", "--encoder-idle", "--to",
-                                      "--memory-limit", "--time-limit", "--tries", "--when-quiet"]
+                                      "--memory-limit", "--time-limit", "--tries", "--when-quiet", "--slides",
+                                      "--max-pages", "--max-chunks"]
+
+    /// The flags whose value is a count: a typo or a negative number is refused here, rather than quietly indexing
+    /// something other than what was asked for.
+    static let counted: Set<String> = ["--limit", "--new-limit", "-n", "--shot-tokens", "--code-stretch",
+                                       "--slides", "--max-pages", "--max-chunks", "--tries", "--memory-limit",
+                                       "--encoder-idle", "--linger", "--when-quiet"]
     static let repeated: Set<String> = ["--exclude", "--exclude-ext", "--code-root", "--code-exclude"]
 
     init(_ raw: ArraySlice<String>) throws {
@@ -86,6 +97,13 @@ struct Arguments {
             } else {
                 positional.append(argument)
                 index += 1
+            }
+        }
+        for flag in Self.counted {
+            guard let value = values[flag] else { continue }
+            // `--limit 0` is a real answer ("no limit"), so zero is allowed here; negatives and words are not.
+            guard let number = Int(value), number >= 0 else {
+                throw CLIError("\(flag) takes a number of 0 or more, not \"\(value)\"")
             }
         }
     }
@@ -112,6 +130,8 @@ struct Arguments {
         if let tokens = values["--shot-tokens"].flatMap(Int.init) { options.screenshotBudget = tokens }
         if let characters = values["--code-stretch"].flatMap(Int.init) { options.codeStretch = characters }
         if let pages = values["--slides"].flatMap(Int.init) { options.maxSlidePages = pages }
+        if let pages = values["--max-pages"].flatMap(Int.init) { options.maxPages = pages }
+        if let chunks = values["--max-chunks"].flatMap(Int.init) { options.maxChunks = chunks }
         return options
     }
 
