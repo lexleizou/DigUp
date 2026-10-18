@@ -55,6 +55,10 @@ public struct IndexOptions: Sendable {
     public var pdfStep = 30                // pages
     public var docStep = 40                // chunks, ~64,000 characters
     /// Only machine-made giants get this far: a file's pages or chunks past these are left out.
+    /// A presentation's pages rendered as pictures, for the charts and diagrams a search can only find as a picture.
+    /// 0 turns it off (the CLI's `--slides 0`); nothing renders without a converter either way (`OfficeConverter`).
+    /// Each page is one image vector, so a deck of 40 slides costs 40 of them.
+    public var maxSlidePages = 60
     public var maxPages = 5_000
     public var maxChunks = 5_000           // ~8 million characters
     public var minPageText = 200           // fewer characters than this: embed the rendered page instead

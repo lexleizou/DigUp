@@ -48,6 +48,10 @@ public final class Indexer {
     /// DigUp ships): recordings are searchable by how they sound and by nothing they say.
     public var transcriber: (any Transcriber)?
 
+    /// Turns the formats no reader here understands into ones it does (`OfficeConverter`). Unset (how DigUp ships):
+    /// a binary .ppt or .xls is skipped, and every other format is read natively.
+    public var converter: OfficeConverter?
+
     /// The vector source of the embedders `makeEmbedder` makes, when it's known without starting one (llama.cpp's is):
     /// then `checkModel()` can notice a new model before anything needs embedding.
     public var embedderSource: String?
@@ -257,11 +261,12 @@ public final class Indexer {
         case .images(let screenshot, let ready):
             measured.add(screenshot ? "screenshot" : "image", units: Double(ready.count), seconds: seconds)
         case .pdf(let pages, _, _, _): measured.add("pdfPage", units: Double(pages.count), seconds: seconds)
-        case .doc(let chunks, _, _, _):
+        case .doc(let chunks, _, _, _, let slides):
             // Chunks with a vector: a data dump's go to keyword search only and take next to nothing, which isn't
             // what a chunk of prose costs (the estimate can't tell them apart from a file's size).
             let worded = chunks.filter(SearchText.hasWords).count
             if worded > 0 { measured.add("docChunk", units: Double(worded), seconds: seconds) }
+            if !slides.isEmpty { measured.add("pageImage", units: Double(slides.count), seconds: seconds) }
         case .audio(_, let duration): measured.add("audioSecond", units: duration, seconds: seconds)
         case .video(_, _, let duration): measured.add("videoSecond", units: duration, seconds: seconds)
         case .code(let file): measured.add("codeStretch", units: Double(file.pieces.count), seconds: seconds)
@@ -348,7 +353,8 @@ public final class Indexer {
         /// `read`: the pages read (from 0) of the PDF's `total`.
         case pdf(pages: [PDFExtractor.Page], read: Range<Int>, total: Int, title: String?)
         /// `chunks`: the ones in `read` (from 0) of the document's `total` (counted up to `IndexOptions.maxChunks` + 1).
-        case doc(chunks: [String], read: Range<Int>, total: Int, characters: Int)
+        /// `slides`: the pictures of a presentation's pages (`OfficeConverter.slidePictures`), numbered from 1.
+        case doc(chunks: [String], read: Range<Int>, total: Int, characters: Int, slides: [MediaPiece])
         case audio(pieces: [MediaPiece], duration: Double)
         case video(frames: [MediaPiece], sound: [MediaPiece], duration: Double)
         case code(CodeExtractor.File)
@@ -396,15 +402,18 @@ public final class Indexer {
         let pending = PendingBatch()
         jobsPrepared += 1
         let (options, folder) = (options, scratch.appendingPathComponent("batch-\(jobsPrepared)"))
+        let converter = converter
         preparing.async {
-            pending.fulfill(Self.prepare(job, options: options, into: folder))
+            pending.fulfill(Self.prepare(job, options: options, into: folder, converter: converter))
         }
         return pending
     }
 
-    static func prepare(_ job: Job, options: IndexOptions, into folder: URL) -> Prepared {
+    static func prepare(_ job: Job, options: IndexOptions, into folder: URL,
+                        converter: OfficeConverter?) -> Prepared {
         let batch = job.files
         var prepared = Prepared(batch: batch, step: job.step, folder: folder)
+        var wanted = 0..<0   // the pages a converted .ppt had read, for the PDF payload
         let url = URL(fileURLWithPath: batch[0].path)
         startReading(batch[0].path)
         defer { readingLock.withLock { reading = nil } }
@@ -434,7 +443,6 @@ public final class Indexer {
                 prepared.payload = .images(screenshot: screenshot, ready: ready)
             case .pdf:
                 // Long PDFs (books) get their first pages now and the rest after everything else.
-                var wanted = 0..<0
                 let read = try PDFExtractor.pages(of: url, range: { total in
                     wanted = (job.step ?? (total > options.bigPDFPages ? 0..<options.pdfStep : 0..<options.maxPages))
                         .clamped(to: 0..<min(total, options.maxPages))
@@ -442,12 +450,43 @@ public final class Indexer {
                 }, minText: options.minPageText, renderPixels: 1400, to: folder)
                 prepared.payload = .pdf(pages: read.pages, read: wanted, total: read.total, title: read.title)
             case .doc:
+                // A format nothing here reads (a binary .ppt or .xls): the converter turns it into one that is. A .ppt
+                // comes back as a PDF, so its pages, the pictures of them and the words inside those all arrive through
+                // the path below; a .xls comes back as .xlsx, which `OfficeText` reads.
+                var source = url
+                var asPDF: URL?
+                if let format = OfficeConverter.target(for: url.pathExtension) {
+                    // A `.ppt` or `.xls` is a binary file with no text in it a reader here can find: reading it as
+                    // text would put the bytes' noise in the index. Without a converter there's nothing to read.
+                    guard let converter else {
+                        prepared.outcomes[0] = Outcome(state: "skipped", detail: "a .\(url.pathExtension) needs a converter")
+                        prepared.payload = .nothing
+                        return prepared
+                    }
+                    let converted = try converter.convert(url, to: format, in: folder)
+                    if format == "pdf" { asPDF = converted } else { source = converted }
+                }
+                if let asPDF {
+                    let read = try PDFExtractor.pages(of: asPDF, range: { total in
+                        wanted = (job.step ?? (total > options.bigPDFPages ? 0..<options.pdfStep : 0..<options.maxPages))
+                            .clamped(to: 0..<min(total, options.maxPages))
+                        return wanted
+                    }, minText: options.minPageText, renderPixels: 1400, to: folder)
+                    prepared.payload = .pdf(pages: read.pages, read: wanted, total: read.total, title: read.title)
+                    break
+                }
                 // The chunks are cut the same way every time, so a later step goes on where the last one stopped.
-                let text = try DocExtractor.text(of: url)
+                let text = try DocExtractor.text(of: source)
                 let chunks = DocExtractor.chunks(text, limit: options.maxChunks + 1)
                 let read = (job.step ?? 0..<options.docStep).clamped(to: 0..<min(chunks.count, options.maxChunks))
+                // A presentation also becomes the pictures of its slides: its text arrives above with its notes, and
+                // what it shows (charts, diagrams, screenshots) is a picture nobody reads as words.
+                let slides = options.maxSlidePages > 0 && Self.isPresentation(url.pathExtension)
+                    ? (try? converter?.slidePictures(of: url, pixels: 1400, maxPages: options.maxSlidePages,
+                                                     into: folder)) ?? []
+                    : []
                 prepared.payload = .doc(chunks: Array(chunks[read]), read: read, total: chunks.count,
-                                        characters: text.count)
+                                        characters: text.count, slides: job.step == nil ? slides : [])
             case .audio:
                 let (window, hop) = (options.audioWindow, options.audioHop)
                 let (pieces, duration) = try runBlocking {
@@ -506,9 +545,9 @@ public final class Indexer {
                 try images(batch, screenshot: screenshot, ready: ready, results: &results)
             case .pdf(let pages, let read, let total, let title):
                 results[0] = try pdf(batch[0], pages: pages, read: read, total: total, title: title, later: later)
-            case .doc(let chunks, let read, let total, let characters):
+            case .doc(let chunks, let read, let total, let characters, let slides):
                 results[0] = try doc(batch[0], chunks: chunks, read: read, total: total, characters: characters,
-                                     later: later)
+                                     slides: slides, later: later)
             case .audio(let pieces, let duration):
                 results[0] = try audio(batch[0], pieces: pieces, duration: duration)
             case .video(let frames, let sound, let duration):
@@ -630,8 +669,8 @@ public final class Indexer {
     }
 
     /// Chunks `read` of a document (all of a short one, a step of a long one), the way `pdf` reads pages.
-    private func doc(_ file: FileRecord, chunks: [String], read: Range<Int>, total: Int, characters: Int, later: Bool)
-        throws -> (String, String?) {
+    private func doc(_ file: FileRecord, chunks: [String], read: Range<Int>, total: Int, characters: Int,
+                     slides: [MediaPiece], later: Bool) throws -> (String, String?) {
         guard total > 0 else {
             try store.finish(file.id, state: "skipped", detail: "no text")
             return ("skipped", "no text")
@@ -643,15 +682,24 @@ public final class Indexer {
             Prompts.document(title: title, text: chunks[$0])
         })
         let vector = Dictionary(uniqueKeysWithValues: zip(worded, vectors))
+        let slideVectors = slides.isEmpty ? [] : try fullWorker().embedImages(slides.map(\.path),
+                                                                              budget: options.pageBudget)
         let end = min(total, options.maxChunks)
         let unread = read.upperBound < end
         try store.db.transaction {
+            // The pictures of the slides: what the deck shows, as opposed to what it says.
+            for index in slides.indices {
+                try store.addSegment(file: file.id, kind: .pageImage, modality: .image,
+                                     loc: slides[index].start, locEnd: slides[index].end,
+                                     vector: slideVectors[index].vector)
+            }
             for (offset, chunk) in chunks.enumerated() {
                 try store.addSegment(file: file.id, kind: .chunk, modality: .text,
                                      loc: Double(read.lowerBound + offset + 1), excerpt: excerpt(chunk), text: chunk,
                                      vector: vector[offset])
             }
             var info = ["chunks": "\(end)", "chars": "\(characters)"]
+            info["slides"] = slides.isEmpty ? nil : "\(slides.count)"
             info["read_to"] = unread ? "\(read.upperBound)" : nil
             info["read_end"] = unread ? "\(end)" : nil
             let detail = unread ? "read to chunk \(read.upperBound) of \(end)" : end < total ? "the first \(end) chunks" : nil
@@ -710,6 +758,11 @@ public final class Indexer {
         let words = said.compactMap { $0 }.count
         return ("done", "\(pieces.count) windows, \(Int(duration)) s"
                 + (words > 0 ? ", \(words) written down" : ""))
+    }
+
+    /// The formats whose pages are pictures of a slide rather than a flow of text.
+    static func isPresentation(_ ext: String) -> Bool {
+        ["pptx", "pptm", "potx", "potm", "ppt", "odp"].contains(ext.lowercased())
     }
 
     /// What each window says, one entry per piece (nil where nothing was said or no transcriber is set).

@@ -25,6 +25,9 @@ public enum Rules {
         "txt", "text", "md", "markdown", "rtf", "docx", "doc", "odt", "html", "htm", "xlsx", "pptx", "ods", "odp",
         // The same files with macros: same zip, same XML, so they're read the same way (`OfficeText`).
         "xlsm", "xltx", "xltm", "pptm", "potx", "potm", "docm", "dotx", "dotm",
+        // The binary ones (OLE compound files, no reader here): read through a conversion when one is set up
+        // (`OfficeConverter`), and skipped as before when it isn't.
+        "ppt", "xls",
     ]
 
     /// Source code and data files: off by default (your editor and ripgrep search them better, and they flood an index).
